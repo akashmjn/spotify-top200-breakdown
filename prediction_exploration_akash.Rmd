@@ -1,0 +1,101 @@
+---
+title: "prediction_exploration - Akash"
+output: html_document
+author: "Akash Mahajan (akashmjn@stanford.edu), Raunaq Rewari (raunaq@stanford.edu)"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+sapply(c('ggplot2','data.table','tidyverse','DT','gridExtra'),require,character.only=TRUE)
+```
+
+## Overview
+
+Loading of data 
+
+```{r dataoverview1, echo=FALSE}
+
+# loading in script files
+source("dataPreparation.R")
+
+dt = fread("data.csv")  # faster than read.csv 
+setnames(dt,"Track Name","TrackName")
+dt[,Date:=as.Date(Date)]
+data = data.frame(dt)
+data$Date = as.Date(data$Date)
+
+datatable(head(dt[Region=="global"][Date=="2017-08-17"][order(-Streams)],20),options = list(pageLength=5))
+
+```
+
+Looking at mean streams by region, for simplicity we keep only the top 20 regions, that correspond to regions with at least ~13000 mean daily streams. 
+
+```{r dataoverview2, echo=FALSE}
+
+# Mean of streams by region
+dailyStreamsByRegion = dt[,.(MeanStreams=mean(Streams)),by=Region]
+ggplot(dailyStreamsByRegion[Region!='global'])+
+  geom_bar(aes(x=reorder(Region,-MeanStreams),y=MeanStreams),stat = 'identity')+
+  theme(axis.text.x=element_text(angle=45,hjust=1))+
+  xlab('Region')+ylab('Mean daily streams')
+
+# Filter to just top 20 regions
+dt = getTopNRegions(dt,20)
+```
+
+### Variation by region 
+
+We look at the total number of unique tracks that have made it to the charts for different regions, over our time period of interest. e.g. Top200 (our entire dataset), Top100, Top50, etc. 
+We see that great britain (gb) and sweden (se) have a relatively high number of tracks in Top200 (~1500 and ~1200) compared to the US and global charts (~1100, ~750), while it is more stable at the Top50 stage. This probably suggest that many more new tracks enter and leave the charts there, which might make it and interesting region to focus on. 
+
+```{r regionvariation, echo=FALSE}
+
+# filter tracks by chart positions (top 200 tracks, top 100 tracks, etc.)
+
+topUniqueTracks = data.table()
+for(N in c(200,100,50,20,10)){
+  stat = getTopNTracks(dt,N)
+  topNTracksByRegion = stat[[2]]
+  topUniqueTracks = rbind(topUniqueTracks,
+                          topNTracksByRegion[,
+                                      .(UniqueTracks=.N,Category=paste0("Top",N)),
+                                      by=Region])
+}
+
+# plotting unique songs by region
+ggplot(topUniqueTracks)+
+  geom_bar(aes(x=reorder(Region,-UniqueTracks),
+               y=UniqueTracks,fill=Category),stat='identity',position = 'dodge')
+
+
+
+```
+
+
+## Exploring Top50 for Great Britain, Sweden Regions
+
+Plotted below are the trends in tracks in GB, SE regions that have made it to the Top50 at some point over their life in our dataset. 
+
+Just comparing these two regions, we can qualitatively see a difference in dynamics.
+
+@Raunaq - If we were to filter and keep only tracks that have made a 'rise', maybe this could be a classification task. 
+
+Just like in time-series regression, we could train on X=3 months, and Y=whether it made the category in the following month. This window will move across our period to give many such intervals. 
+
+Training / test data split can be done on the basis of randomly sampling out tracks, out of the total 2000 or so tracks present here.  
+
+```{r GBSEtop50, echo=FALSE}
+
+stat = getTopNTracks(dt,50)
+dtTop50 = stat[[1]]
+dtGBTop50 = dt[Region=='gb']
+
+# filter and only keep tracks that have made a rise in the charts
+# i.e. min Position of track is less that threshold at some point 
+
+ggplot(dtTop50[Region%in%c('gb','se')])+
+  geom_line(aes(x=Date,y=Streams,group=TrackName,alpha=0.2,color=Position))+
+  facet_wrap(~Region,scale="free_y",nrow=2)
+
+```
+
