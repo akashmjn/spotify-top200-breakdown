@@ -1,0 +1,82 @@
+---
+title: "Data Exploration"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Initial Exploration
+```{r include=FALSE}
+sapply(c('ggplot2','data.table','tidyverse'),require,character.only=TRUE)
+```
+
+```{r warning=FALSE}
+# dt = fread("data.csv")
+# data = data.frame(dt)
+data = read.csv("data.csv")
+data$Date = as.Date(data$Date)
+# Find out the tracks that are in the top 20 and count the number of regions where it was in the top 20
+summary = group_by(data, Track.Name) %>% filter(Position <= 20) %>% summarise(total=n_distinct(Region))
+print(nrow(filter(summary, total >= mean(summary$total))))
+```
+This is the number of tracks that are in the top 20 in at least the mean number of regions that all the songs in the dataset exist.
+
+Let's see the popularity trends of the songs that make it to the top 20 and are better than the other songs in this top 20 list based on median number of streams. To make visualizing trends easier, we only look at the "global" region and the top 50 songs in terms of streams
+
+```{r}
+
+summary_2 = group_by(data, Track.Name) %>% filter(Region == "global", Position <= 20)
+
+topGlobalTop20Tracks = unique((summary_2 %>% filter(Streams > median(summary_2$Streams)))$Track.Name)[(1:50)]
+
+data %>% filter(Region == "global", Track.Name %in% topGlobalTop20Tracks) %>% ggplot() + geom_line(mapping = aes(x=Date, y=Streams, color = Track.Name), alpha=0.6)+
+  theme(legend.position="none")
+
+```
+It looks like the popularity rises, reaches a maxima and drops off for all the 50 songs presented here pretty early on in the song's life.
+
+The following plots the popularity trends of the songs at the bottom of the top 20 list based on streams
+```{r}
+
+bottomGlobalTop20Tracks = unique((summary_2 %>% filter(Streams < median(summary_2$Streams)))$Track.Name)[-(1:50)]
+
+data %>% filter(Region == "global", Track.Name %in% bottomGlobalTop20Tracks) %>% ggplot() + geom_line(mapping = aes(x=Date, y=Streams, color = Track.Name), alpha=0.6)+
+  theme(legend.position="none")
+
+```
+
+It looks like the trends here are a little more unpredictable with the maxima arising at different points of a song's life
+
+Doing a similar analysis for the songs at the bottom of the top 200 playlist i.e. 180 < Position < 200
+Following is a plot for the top 50 songs above the median number of Streams
+
+```{r}
+
+summary_2 = group_by(data, Track.Name) %>% filter(Region == "global", Position <= 180)
+
+top50GlobalTop200Tracks = unique((summary_2 %>% filter(Streams > median(summary_2$Streams)))$Track.Name)[(1:50)]
+
+data %>% filter(Region == "global", Track.Name %in% top50GlobalTop200Tracks) %>% ggplot() + geom_line(mapping = aes(x=Date, y=Streams, color = Track.Name), alpha = 0.6) + theme(legend.position="none")
+
+```
+
+Following is a plot for the bottom 50 songs below the median number of Streams
+```{r}
+
+bottom50GlobalTop200Tracks = unique((summary_2 %>% filter(Streams < median(summary_2$Streams)))$Track.Name)[-(1:50)]
+
+data %>% filter(Region == "global", Track.Name %in% bottom50GlobalTop200Tracks) %>% ggplot() + geom_line(mapping = aes(x=Date, y=Streams, color = Track.Name), alpha=0.6) +
+  theme(legend.position="none")
+
+```
+
+It seems that the top performing songs in the lower part of the top 200 playlist, start strong but very rapidly tail off. The worse performing songs never seem to spark any listening enthusiasm. 
+
+## Caveats
+Caveats about the data
+1. There is a region called "global"
+

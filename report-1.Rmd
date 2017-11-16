@@ -1,0 +1,143 @@
+---
+title: "mini-project-1"
+output: html_document
+author: "Akash Mahajan (akashmjn@stanford.edu), Raunaq Rewari (raunaq@stanford.edu)"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r include=FALSE}
+sapply(c('ggplot2','data.table','tidyverse','DT','gridExtra'),require,character.only=TRUE)
+```
+
+## Dataset - Spotify's Worldwide Daily Song Ranking
+
+### Introduction
+
+Whether we like it or not, we have all been inflicted by 'Despacito' at some point. Released early this year, the song quickly amassed 4.6 billion streams by July 2017, making it the most streamed song in history[^1], and the quickest to reach 3 billion views on Youtube, despite being in a completely foreign language.
+
+Motivated by our pain, admittedly awe as well, and a general curiosity about how such phenomenon spread, we set out to explore a dataset from Spotify[^2]. What are the signs that a song will make the charts? What influences how long it will stay? Are there any interesting global correlations (or lack of) in the spread of popularity? 
+
+[^1]: https://www.theverge.com/2017/7/19/15997816/despacito-song-luis-fonsi-daddy-yankee-justin-bieber-most-streamed
+
+[^2]: A global music streaming service present in 53 countries https://www.spotify.com/us/
+
+### Dataset overview and validation
+
+Our dataset comprises of the daily top 200 most listened songs (by stream count) on Spotify in 54 regions over a period of 1st January 2017 to 17th August 2017 (source: [^3], gathered via an automated crawler accessing the Spotify Web API).
+The regions comprise 53 countries, and a 'global' region contining overall top songs. For each day and region, we have a list of the top 200 songs, with their position, a unique identifier, basic information such as track name, artist, and the number of streams. In total, this amounts to about 2 million rows including 4682 unique artists, and 11932 unique songs tracked over this period. 
+To give a brief idea of what the data looks like, some of the global top hits, on 17th August 2017 listed below:
+
+[^3]: https://www.kaggle.com/edumucelli/spotifys-worldwide-daily-song-ranking 
+
+```{r dataoverview1, echo=FALSE}
+
+dt = fread("data.csv")  # faster than read.csv 
+setnames(dt,"Track Name","TrackName")
+dt[,Date:=as.Date(Date)]
+data = data.frame(dt)
+data$Date = as.Date(data$Date)
+
+datatable(head(dt[Region=="global"][Date=="2017-08-17"][order(-Streams)],20),options = list(pageLength=5))
+
+```
+
+This data has no missing values. However some initial exploration (below) shows that for simplicty of analysis, some of the regions can be filtered out due to a low number of mean daily streams. Also, looking at the region-wise trends for 'Despacito', we notice a massive spike that probably needs to be re-validated via the API. If these are indeed outliers, they could be interpolated using a sliding median window. 
+
+```{r dataoverview2, echo=FALSE}
+
+dailyStreamsByRegion = dt[,.(Streams=mean(Streams)),by=.(Date,Region)][,.(MeanStreams=mean(Streams)),by=Region]
+
+p1 <- ggplot(dailyStreamsByRegion[Region!='global'])+
+  geom_bar(aes(x=reorder(Region,-MeanStreams),y=MeanStreams),stat = 'identity')+
+  theme(axis.text.x=element_text(angle=45,hjust=1))+
+  xlab('Region')+ylab('Mean daily streams')
+
+p2 <- ggplot(dt[Region!="global"][TrackName=="Despacito (Featuring Daddy Yankee)"])+
+  geom_line(aes(x=Date,y=Streams))+
+  facet_wrap(~Region)
+
+# @Raunaq - check this out for arranging plots
+grid.arrange(p1,p2,ncol=2)
+
+```
+
+
+## Analysis
+
+### Possible Objectives
+
+For a concrete analysis of our data, we formulate our problem in two possible ways.
+
+Binary reponse variable: given historical data for songs in the top 200, can we predict in advance if a song will make it to the top 20? 
+
+Continuous reponse variable: how long will a song stay in the top 20, or forecasting number of streams for a song in the next month. 
+
+### Transformation
+
+For the objectives outlined, we need to transform our data. While we our data is fundamentally in a time-series form, for our binary classification task we will aggregate data for a period of time by song. This will require extraction of some features related to the dynamics, popularity in different regions, and potentially additional information about the song from the API [^4] such as genre, audio analysis etc. A hold-out set can be created by subsetting out a time period / or particular songs, from our dataset. 
+
+[^4: https://spotipy.readthedocs.io/en/latest/]
+
+### Preliminary Exploration
+
+So far we have done an initial exploration to get an understanding of dynamics of song popularity. For simplicity, we look at just the global region below where for our time period of interest, there have been 114 songs that have entered that charts at some point in their life. @Raunaq - complete this.
+
+```{r exploration1, echo=FALSE}
+
+# list of 114 songs that have made it to top 20 at some point
+globalTop20Tracks = unique(dt[Region=='global'][Position<=20,TrackName])
+
+# table containing only those 114 tracks above
+dtGlobalTop20 = dt[Region=='global'][TrackName %in% globalTop20Tracks]
+# calculating median streams track-wise and splitting tracks into top and bottom 50pctile
+dtMedianStreamPerTrack = dtGlobalTop20[,median(Streams),by=TrackName]
+medianStreamsInTop20 = median(dtMedianStreamPerTrack$V1)
+dtMedianStreamPerTrack[,Top50Pct:=(V1>medianStreamsInTop20)]
+
+# joining in as a feature to original table
+dtGlobalTop20 = merge(dtGlobalTop20,
+                      dtMedianStreamPerTrack,on="TrackName")
+
+ggplot(dtGlobalTop20)+
+  geom_line(aes(x=Date,y=Streams,group=TrackName,
+                alpha=(200-Position),color=(Position<=20)))+
+  scale_alpha(range=c(0,1))+
+  facet_wrap(~Top50Pct)
+
+# @Ranuaq - add in two plots to show differences in dynamics 
+# (we may not have space for 4 plots)
+# can maybe extend above idea for tracks in lower ranks (have added your code here for reference as well)
+
+# summary_2 = group_by(data, Track.Name) %>% filter(Region == "global", Position <= 20)
+# 
+# topGlobalTop20Tracks = unique((summary_2 %>% filter(Streams > median(summary_2$Streams)))$Track.Name)[(1:50)]
+# 
+# data %>% filter(Region == "global", Track.Name %in% topGlobalTop20Tracks) %>% ggplot() + geom_line(mapping = aes(x=Date, y=Streams, color = Track.Name), alpha=0.6)+
+#   theme(legend.position="none")
+
+```
+
+Given this peaking dynamics of song popularity, for these 114 songs we want to look at the duration spent in the top 20 and check if this is well distributed enough. 
+
+```{r exploration2, echo=FALSE}
+dtDaysInTop20 = dtGlobalTop20[,diff(range(Date)),by=TrackName]
+ggplot(dtDaysInTop20)+
+  geom_histogram(aes(x=V1))+
+  xlab("Duration (days) spent in top 20")+
+  ylab("Count of songs")
+```
+
+We see that it is fairly evenly distributed, except for a large number of songs that might be extending over our entire time range. Reasons for this will need to be investigated further, and might influence our final choice of continuous variable. 
+
+### Open Questions
+
+Going forward from this point to the next stage in our analysis, i.e. modelling the song popularities there are a few questions that need to be addressed. 
+
+1. What kind of features do we build from the temporal history of songs? Should we use time-series models?
+2. How do we detect / measure the correlation between popularity in regions? The dataset has thousands of time series for each song across multiple regions. Coming up with a metric to combine and detect this will be hard. 
+3. Are there any additional correlations with genre, artist, lyrics etc. worth exploring?
+4. Deciding our continous response variable between either a forecasting approach or duration in top 20. 
+
