@@ -9,7 +9,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r include=FALSE}
-sapply(c('ggplot2','data.table','tidyverse','DT','gridExtra'),require,character.only=TRUE)
+sapply(c('ggplot2','data.table','tidyverse','DT','gridExtra','forecast'),require,character.only=TRUE)
 ```
 
 ## Recap - Spotify's Worldwide Daily Song Ranking
@@ -21,7 +21,7 @@ To simplify our problem, we focus our attention on only the top 20 regions, effe
 ```{r dataprep, echo=FALSE}
 
 # loading in script files
-source("dataPreparation.R")
+source("src_akash.R")
 
 dt = fread("data.csv")  # faster than read.csv 
 setnames(dt,"Track Name","TrackName")
@@ -71,7 +71,7 @@ For illustration purposes, trends for songs that have made it to the top 50 at s
 
 # filter tracks by chart positions (top 200 tracks, top 100 tracks, etc.)
 topUniqueTracks = data.table()
-for(N in c(200,100,50,20,10)){
+for(N in c(200,100,50,20,5)){
   stat = getTopNTracks(dtFilteredTS,N)
   topNTracksByRegion = stat[[2]]
   topUniqueTracks = rbind(topUniqueTracks,
@@ -104,7 +104,7 @@ ggplot(dtTop50[Region%in%regionVec])+
 
 * Classification: Given the temporal history of songs over a time interval (say 28 days), can we predict if the song will - leave top 200/stay/reach Top 50/20 in the next month? 
 *@Raunaq* dataset for this needs to be generated - (note that the starting times need not be aligned, i.e. for each track X is the time series, label is what happened in the next month)
-* Regression: For songs in the top 10, how accurately can we forecast the number of streams, looking ahead a certain period (say 3-4 weeks)? 
+* Regression: For songs in the top 5, how accurately can we forecast the number of streams, looking ahead a certain period (say 3-4 weeks)? 
 
 Our classification task output could be useful in ranking/determining our best estimate of the top 50 the following month, given data upto today. 
 
