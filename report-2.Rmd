@@ -9,7 +9,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r include=FALSE}
-sapply(c('ggplot2','data.table','tidyverse','DT','gridExtra','forecast'),require,character.only=TRUE)
+sapply(c('ggplot2','data.table','tidyverse','DT','gridExtra','forecast','xts'),require,character.only=TRUE)
 ```
 
 ## Recap - Spotify's Worldwide Daily Song Ranking
@@ -102,11 +102,10 @@ ggplot(dtTop50[Region%in%regionVec])+
 
 ### Formulating prediction tasks
 
-* Classification: Given the temporal history of songs over a time interval (say 28 days), can we predict if the song will - leave top 200/stay/reach Top 50/20 in the next month? 
-*@Raunaq* dataset for this needs to be generated - (note that the starting times need not be aligned, i.e. for each track X is the time series, label is what happened in the next month)
-* Regression: For songs in the top 5, how accurately can we forecast the number of streams, looking ahead a certain period (say 3-4 weeks)? 
+* Classification: Given external data about track from the Spotify API, such as genre, artist, and the region from our dataset, can we predict the category labels? 
+* Regression: For songs in the top 5, can we forecast the number of streams, looking ahead a certain period (say 10 days)? 
 
-Our classification task output could be useful in ranking/determining our best estimate of the top 50 the following month, given data upto today. 
+The classification task output would be useful to explore at a high-level what correlates with song popularity. 
 
 The regression task output could be useful in helping estimate how long a song that has made it to the top of the charts actually stays there. 
 
@@ -116,24 +115,72 @@ The regression task output could be useful in helping estimate how long a song t
 
 #### Baseline
 
-A simple baseline could be to predict the majority label / simply use the class-wise mean streams to generate an estimate. 
-*@Raunaq* Try this. 
 
 ### Regression task 
 
 #### Baseline 
 
-A baseline for this task would be to just predict the mean of the data 
+A baseline for this task would be to just predict the mean of the data. We use the RMSE as an evaluation metric to compare against. Our RMSE is 143479.02 (this is high since the scale of our data is relatively high as well). 
 
-## Error Analysis
+```{r regress1, echo=FALSE}
 
+## Making a dataset of only top 5 songs 
+nTop = 5
+topStat = getTopNTracks(dtFilteredTS,5)
+dtTop = topStat[[1]]
+
+dtTopGB = dtTop[Region=='gb']
+gbTopTSIDs = unique(dtTopGB$TSID)
+
+set.seed(3)
+trainTSIDs = sample(gbTopTSIDs,31)
+
+dtTS = dtTopGB[TSID==trainTSIDs[1],.(Streams,Date)]
+trainTS1 = xts(dtTS[,Streams],order.by = dtTS[,Date])
+
+# Printing RMSE
+RMSEBaseline = sqrt(dtTopGB[TSID%in%trainTSIDs,(Streams-mean(Streams))^2,by=TSID][,mean(V1)])
+
+print(paste("RMSE for baseline:",round(RMSEBaseline,2) ))
+
+```
+
+
+#### Approach
+
+For an initial simple analysis, we choose just the GB region with about 41 tracks that have made it to the top 5. We randomly set aside (25\%) ~ 10 tracks that we will not use during our model building purposes. 
+
+We plan to explore the use of time series models for forecasting these streams. We make use of an ARIMA model that effectively regresses on values at a previous time instance. An ARMA(p,q,d) model can be expressed as below (while the I component refers to differencing of the series, done to eliminate a non-zero mean)
+
+\[
+X_t - \alpha_1X_{t-1}, \cdots, -\alpha_pX_{t-p} = \epsilon_t +\theta_1\epsilon_{t-1},\cdots,+\theta_q\epsilon_{t-q} 
+\]
+
+To get an idea of model performance, we just evaluate a best fitted model on a randomly chosen sample of the training songs. 
+
+Model selection (between differently parameterized models for p,q,d), is done using in-sample estimates of the generalization error, namely the AIC via the R package used. 
+
+```{r regress2, echo=FALSE}
+
+tsModel = auto.arima(trainTS1)
+
+summary(tsModel)
+
+ggplot(dtTS)+
+  geom_line(aes(x=Date,y=Streams))+
+  geom_line(aes(x=Date,y=tsModel$fitted),color='red')
+
+plot(forecast(tsModel))
+
+```
+
+While as expected, the RMSE for our model is lower than the baseline, we need further on dealing with a couple of challenged as outlined below. 
 
 ### Open Questions
 
 Going forward from this point to the next stage in our analysis, i.e. modelling the song popularities there are a few questions that need to be addressed. 
 
-1. What kind of features do we build from the temporal history of songs? Should we use time-series models?
-2. How do we detect / measure the correlation between popularity in regions? The dataset has thousands of time series for each song across multiple regions. Coming up with a metric to combine and detect this will be hard. 
-3. Are there any additional correlations with genre, artist, lyrics etc. worth exploring?
-4. Deciding our continous response variable between either a forecasting approach or duration in top 20. 
+1. How do we valide time series models for many different tracks? Do we fit many individual time series models? Do we fit one model per region? 
+
+2. 
 

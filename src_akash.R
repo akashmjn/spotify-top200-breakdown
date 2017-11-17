@@ -17,10 +17,9 @@ getTopNTracks <- function(dt,N){
   # groupby TrackName, Region gives a count of dates 
   topNTracksByRegion = dt[Position<=N][,
                                .(DaysInTopN=.N),
-                               by=.(URL,Region)]
-  topNTracks = topNTracksByRegion[,.(NumberOfRegions=.N),by=URL]
+                               by=.(TSID,Region)]
   # join and filter only tracks in this topN list
-  dtFiltered = merge(dt,topNTracks,by="URL")
+  dtFiltered = merge(dt,topNTracksByRegion,by=c("TSID","Region"))
   return(list(dtFiltered,topNTracksByRegion))
 }
 
