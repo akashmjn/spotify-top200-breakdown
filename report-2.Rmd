@@ -1,0 +1,139 @@
+---
+title: "mini-project-2"
+output: html_document
+author: "Akash Mahajan (akashmjn@stanford.edu), Raunaq Rewari (raunaq@stanford.edu)"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r include=FALSE}
+sapply(c('ggplot2','data.table','tidyverse','DT','gridExtra'),require,character.only=TRUE)
+```
+
+## Recap - Spotify's Worldwide Daily Song Ranking
+
+To recall, we are working with a dataset containing streams for the daily top 200 songs, over a span of 226 days in 2017 (Starting Jan 1st), containing 53 regions totally, as well as global charts. Our data in its raw form looks as below, consisting of Date, Region, TrackName Streams, Artist, Position (on top 200), URL. This corresponds to 916600 rows totally, with the URL serving as a unqiue ID for a track.  
+
+To simplify our problem, we focus our attention on only the top 20 regions, effectively those having mean daily streams of $\geq\sim 13,000$. 
+
+```{r dataprep, echo=FALSE}
+
+# loading in script files
+source("dataPreparation.R")
+
+dt = fread("data.csv")  # faster than read.csv 
+setnames(dt,"Track Name","TrackName")
+dt[,Date:=as.Date(Date)]
+data = data.frame(dt)
+data$Date = as.Date(data$Date)
+
+# Filter to just top 20 regions
+dt = getTopNRegions(dt,20)
+
+head(dt[Region=="global"][Date=="2017-08-17"][order(-Streams)],5)
+
+# datatable(head(dt[Region=="global"][Date=="2017-08-17"][order(-Streams)],20),options = list(pageLength=5))
+
+```
+
+## Problem Formulation
+
+### Transformation / Discretization 
+
+While our dataset looks deceptively simple in form, it is also fairly unstructured, consisting of about ~19000 partial time series values for each unique (Track,Region) in the recorded period. These are partial, since a song may enter/leave the top 200 for only a small period of time. Thus building on some of the open questions from our previous report, we've done some further exploration before posing our problem. Our primary motivation is - can we spot any potential trends in song streams that indicate a rise in popularity, to say Top 50? 
+
+We first make sure that we are working with songs that only have fairly complete durations of streams present. Looking at how the tracks are distributed, we confirm our expectation that a good number are present for a very small number of days (<10-15). We arbitrarily set a threshold at d=28 days (i.e. 4 weeks), bringing down the total number of tracks/time series to ~8300. 
+
+```{r tsdurations, echo=FALSE}
+
+dtTSDurations = dt[,.(DaysInCharts=.N),by=.(URL,Region)]
+
+p1 <- ggplot(dtTSDurations)+geom_histogram(aes(x=DaysInCharts),bins=50)+ylab("Histogram of tracks")
+p2 <- ggplot(dtTSDurations)+stat_ecdf(aes(x=DaysInCharts))+ylab("CDF of Tracks")
+
+grid.arrange(p1,p2,nrow=1)
+
+# Filtering down data to only time series of a minium duration
+# Giving a unique ID to a (Track,Region) pair. (this corresponds to one time series)
+tsFilterStat = filterValidTS(dt,28)
+dtFilteredTS = tsFilterStat[[1]]
+dtTSDurations = tsFilterStat[[2]]
+
+```
+
+Finally, we split these songs into discrete categories, based on an arbitrary popularity category such as Top 50, 100, etc. (Note that top 200 constitutes our entire dataset). These tracks are then randomly sampled, to constitute our training/test datasets.  
+
+For illustration purposes, trends for songs that have made it to the top 50 at some point over our period of interest, are plotted below. 
+
+```{r regionvariation, echo=FALSE}
+
+# filter tracks by chart positions (top 200 tracks, top 100 tracks, etc.)
+topUniqueTracks = data.table()
+for(N in c(200,100,50,20,10)){
+  stat = getTopNTracks(dtFilteredTS,N)
+  topNTracksByRegion = stat[[2]]
+  topUniqueTracks = rbind(topUniqueTracks,
+                          topNTracksByRegion[,
+                                      .(UniqueTracks=.N,Category=paste0("Top",N)),
+                                      by=Region])
+}
+
+# plotting unique songs by region
+ggplot(topUniqueTracks)+
+  geom_bar(aes(x=reorder(Region,-UniqueTracks),
+               y=UniqueTracks,fill=Category),stat='identity',position = 'dodge')
+
+## Looking at behavior 
+top50Stat = getTopNTracks(dtFilteredTS,50)
+dtTop50 = top50Stat[[1]]
+
+# filter and only keep tracks that have made a rise in the charts
+# i.e. min Position of track is less that threshold at some point 
+
+regionVec = c('gb','se','us')
+
+ggplot(dtTop50[Region%in%regionVec])+
+  geom_line(aes(x=Date,y=Streams,group=TrackName,alpha=0.2,color=Position))+
+  facet_wrap(~Region,scale="free_y",nrow=length(regionVec))
+
+```
+
+### Formulating prediction tasks
+
+* Classification: Given the temporal history of songs over a time interval (say 28 days), can we predict if the song will - leave top 200/stay/reach Top 50/20 in the next month? 
+*@Raunaq* dataset for this needs to be generated - (note that the starting times need not be aligned, i.e. for each track X is the time series, label is what happened in the next month)
+* Regression: For songs in the top 10, how accurately can we forecast the number of streams, looking ahead a certain period (say 3-4 weeks)? 
+
+Our classification task output could be useful in ranking/determining our best estimate of the top 50 the following month, given data upto today. 
+
+The regression task output could be useful in helping estimate how long a song that has made it to the top of the charts actually stays there. 
+
+## Prediction Progress 
+
+### Classification task
+
+#### Baseline
+
+A simple baseline could be to predict the majority label / simply use the class-wise mean streams to generate an estimate. 
+*@Raunaq* Try this. 
+
+### Regression task 
+
+#### Baseline 
+
+A baseline for this task would be to just predict the mean of the data 
+
+## Error Analysis
+
+
+### Open Questions
+
+Going forward from this point to the next stage in our analysis, i.e. modelling the song popularities there are a few questions that need to be addressed. 
+
+1. What kind of features do we build from the temporal history of songs? Should we use time-series models?
+2. How do we detect / measure the correlation between popularity in regions? The dataset has thousands of time series for each song across multiple regions. Coming up with a metric to combine and detect this will be hard. 
+3. Are there any additional correlations with genre, artist, lyrics etc. worth exploring?
+4. Deciding our continous response variable between either a forecasting approach or duration in top 20. 
+

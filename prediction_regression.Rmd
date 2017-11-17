@@ -41,7 +41,6 @@ ggplot(dailyStreamsByRegion[Region!='global'])+
 
 # Filter to just top 20 regions
 dt = getTopNRegions(dt,20)
-
 ```
 
 ### Variation by region 

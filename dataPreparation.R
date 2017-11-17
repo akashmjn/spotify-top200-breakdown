@@ -17,15 +17,22 @@ getTopNTracks <- function(dt,N){
   # groupby TrackName, Region gives a count of dates 
   topNTracksByRegion = dt[Position<=N][,
                                .(DaysInTopN=.N),
-                               by=.(TrackName,Region)]
-  topNTracks = topNTracksByRegion[,.(NumberOfRegions=.N),by=TrackName]
+                               by=.(URL,Region)]
+  topNTracks = topNTracksByRegion[,.(NumberOfRegions=.N),by=URL]
   # join and filter only tracks in this topN list
-  dtFiltered = merge(dt,topNTracks,by="TrackName")
+  dtFiltered = merge(dt,topNTracks,by="URL")
   return(list(dtFiltered,topNTracksByRegion))
 }
 
-# filter and only keep tracks that have made a rise in the charts
-# i.e. min Position of track is less that threshold
-filterRisenTracks <- function(dt,minPosition){
-  
+# filter valid time series 
+# Returns: list( dtFiltered, dtTSDurations )
+filterValidTS <- function(dt,minDaysThresh){
+  # pulling out time series with minimum days present 
+  dtTSDurations = dt[,.(DaysInCharts=.N),by=.(URL,Region)][DaysInCharts>=minDaysThresh]
+  # giving each time series and ID
+  dtTSDurations[,TSID:=.I]
+  # joining and filtering back on original dataset
+  dtFiltered = merge(dt,dtTSDurations[,.(TSID,Region,URL)],by = c("URL","Region"))
+  return(list(dtFiltered,dtTSDurations))
 }
+
