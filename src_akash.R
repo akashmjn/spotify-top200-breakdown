@@ -25,11 +25,13 @@ getTopNTracks <- function(dt,N){
 
 # filter valid time series 
 # Returns: list( dtFiltered, dtTSDurations )
-filterValidTS <- function(dt,minDaysThresh){
+filterValidTS <- function(dt,minDaysThresh,addTSID=FALSE){
   # pulling out time series with minimum days present 
   dtTSDurations = dt[,.(DaysInCharts=.N),by=.(URL,Region)][DaysInCharts>=minDaysThresh]
-  # giving each time series and ID
-  dtTSDurations[,TSID:=.I]
+  if(addTSID==TRUE){
+    # giving each time series and ID
+    dtTSDurations[,TSID:=.I]
+  }
   # joining and filtering back on original dataset
   dtFiltered = merge(dt,dtTSDurations[,.(TSID,Region,URL)],by = c("URL","Region"))
   return(list(dtFiltered,dtTSDurations))

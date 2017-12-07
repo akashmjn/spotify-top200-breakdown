@@ -1,6 +1,7 @@
 ## Ignoring data files
 *.csv
 *.RData
+*.Rhistory
 
 ## Ignoring folders
 guidelines/*

@@ -18,16 +18,45 @@ Loading of data. Generating a dataset containing just the top 10 tracks.
 # loading in script files
 source("src_akash.R")
 
-dt = fread("data.csv")  # faster than read.csv 
-setnames(dt,"Track Name","TrackName")
+# read in only the top 20 regions 
+dt = fread("data_t20regions.csv")  # faster than read.csv 
 dt[,Date:=as.Date(Date)]
 data = data.frame(dt)
 data$Date = as.Date(data$Date)
 
-# Filter to just top 20 regions
-dt = getTopNRegions(dt,20)
+
+# create train, test classification datasets 
+posThreshold = 20
+dtDaysInTop20 = dt[Position<=posThreshold,.(DaysInTop20=.N,
+                                            MeanStreams=mean(MeanStreams))
+                   ,by=.(URL,Region,TSID)]
+dtDaysInTop20[,Label:=TRUE]
+# read in song_features data
+song_feats = fread("song_feats.csv")
+dtClassification = merge(song_feats,dtDaysInTop20[,.(URL,MeanStreams,Label)],
+                         by="URL",all.x = TRUE)
+dtClassification = dtClassification[,by=URL]
+
+ggplot(dtDaysInTop20)+geom_histogram(aes(x=DaysInTop20))+facet_wrap(~Region)
+
+# # creating classification data labels
+# posThreshold = 20
+# dt[Position<=posThreshold,.N,by=.(URL,Region)]
+
+# correlations of top tracks - auto, cross with regions
+
 
 ```
+
+## Trend Analysis
+
+```{r trends1, echo=FALSE}
+
+top5Obj = getTopNTracks(dt,5)
+dtTop5 = top5Obj[[1]]
+
+```
+
 
 ## Baseline 
 
