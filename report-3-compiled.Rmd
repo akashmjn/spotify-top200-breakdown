@@ -239,7 +239,7 @@ for(i in 1:1000){
 
 ### Inclusion of all covariates 
 
-In our model, we had removed the "time_signature" covariate, as it seemed to be causing some kind of collinearity issues, since we can see that now the std. error on the intercept term has completely blown up. 
+In our model, we had removed the "time_signature" covariate, as it seemed to be causing some kind of collinearity issues, since we can see that now the std. error on the intercept term has completely blown up. This significance levels on the remaining covariates remain more or less the same, and we can see that "time_signature" itself has a very low significance. 
 
 ```{r significance3, echo=FALSE}
 
@@ -276,7 +276,11 @@ exp(coef(model_cv$finalModel))
 
 ## Conclusion 
 
-In conclusion, given the historical data of songs, 
+In conclusion, from our dataset of historical data of songs, and their attributes, we've tried to understand what is it about songs that stay in the charts for a long period, and are able to spread to multiple regions? While our covariates were only able to capture a little of this predictive power, understandably so since this is fairly complicated, we've seen that the songs that do spread across regions tend to be more similar than others, w.r.t. some of the attributes we discussed. Not too suprsingly, "Despacito" seems to fit that mould too. We end with some comments on the utility of our approach and issues / further things that could be explored: 
+* While trying to predict the next top rising songs was out of scope for our project, as we've seen prediciting this is fairly complex and difficult to capture most of the subjective variations that change from year to year. Instead, without the constraint of being too limited in terms of numbers of songs, our approach could be useful in an inference setting to understand current tastes. 
+* Almost by definition, these things vary from year-to-year, hence this would definitely not be a static approach. Interestingly, there might be some invariant qualities as well, such as tempo that may actually had true over previous years as well. 
+* In filtering and formulating our problem, we've had to deal with issues since we are only obseriving a small snapshot of evolving trends. We've tried to account for this by not being biased by the rise and fall of tracks outside our time-range, but instead looking at more invariant qualities. 
+* If we were to attack the same problem again, we would probably not spend as much time as we did on the granular temporal aspect of streams per track, for what's quite a complicated process. Moreover, obtaining information about the release date of tracks (which is unavailable via API), would solve quite a few of the temporal-related issues, as then we could very specifically model the growth of popularity from start to end. 
 
 \newpage
 ## Source Code
