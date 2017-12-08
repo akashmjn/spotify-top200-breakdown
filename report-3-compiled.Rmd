@@ -1,0 +1,425 @@
+---
+title: "mini-project-3"
+author: "Akash Mahajan (akashmjn@stanford.edu), Raunaq Rewari (raunaq@stanford.edu)"
+output:
+  pdf_document: 
+    keep_tex: yes
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r include=FALSE}
+sapply(c('ggplot2','data.table','tidyverse','DT','gridExtra','forecast',
+         'caret','pROC','xts','GGally'),require,character.only=TRUE)
+```
+
+## Recap - Spotify's Worldwide Daily Song Ranking
+
+Both, inflicted and inspired by the global reggaeton phenomenon[^1] 'Despacito', we had set out with our project to investigate the questions 'what is it about songs that are popular?'. Through our project, we try to explore this, along with any interesting correlations for songs with a high-cross regional presence.   
+
+[^1]: https://insights.spotify.com/us/2017/09/05/how-reggaeton-became-a-global-phenomenon-on-spotify/
+
+To recall, we are working with a dataset containing streams for the daily top 200 songs, over a span of 226 days in 2017 (Starting Jan 1st), containing 53 regions totally, as well as global charts. Our data in its raw form looks as below, consisting of Date, Region, TrackName Streams, Artist, Position (on top 200), URL (serving as a unique identifier for a track). Additionally, we also have a dataset of song attributes such as "energy","liveness","tempo" etc. for each unique URL that we gathered using the Spotify API[^2]. 
+
+[^2]: http://spotipy.readthedocs.io/en/latest/ 
+
+```{r dataprep1, echo=FALSE}
+
+# loading in script/data files
+source("src_akash.R")
+dt = fread("data/data_t20regions.csv")
+dt[,Date:=as.Date(Date)]
+akash_data = data.frame(dt)
+song_feats = read.csv("data/song_feats.csv")
+
+```
+
+## Problem Formulation
+
+### Dataset transformations
+
+To simplify our problem, we focused our attention on only the top 20 regions (by mean daily streams of $\geq\sim 13,000$). This corresponds to 6958 unique tracks totally. Since our dataset is over a time period of less than a year, we may not have an accurate idea of the chart performance of tracks that were introduced before (they might have peaked before our time period), or tracks just introduced (they might peak later), hence we filter to tracks that have spent at least 12 weeks in the top 200 charts of respective regions. This yields 1776, 722722 tracks+time points respectively that are split into training/test in ratio 0.75/0.25. 
+
+```{r dataprep2, echo=FALSE}
+
+# create a ts summaries dataset (dt is already joined with track-wise attributes)
+# will be joined with song_feats for classification
+# MeanStreams, TopPosition, DaysInCharts, URL, Region, TSID
+dtTSSummaries = dt[Region!='global'][,.(MeanStreams=MeanStreams[1],
+                                        TopPosition=min(Position),
+                                        DaysInCharts=DaysInCharts[1]),
+                                     by=.(TSID,URL,Region)]
+dtTrackSummaries = dtTSSummaries[,.(MeanStreams=mean(MeanStreams)),by=URL]
+
+# # narrow down to tracks that have stayed in charts for a while
+# dtTSSummaries[DaysInCharts>=84,n_distinct(Region),by=URL]
+# # create positive, negative examples, run classification (533/1542)
+# dt[DaysInCharts>=84,.(N_region=n_distinct(Region),TopPosition=min(Position)),by=URL][TopPosition<=20]
+# # number of regions that long-staying songs are present in 
+# qplot(dt[Region!='global'][DaysInCharts>=84,n_distinct(Region),by=URL])
+
+```
+
+Thus as a popularity measure, we look at the tracks that spent at least 8 weeeks on the charts in more than 1 region - as we can see in the chart below, not many tracks make this jump in global popularity. We cast our problem as a classification task: how indicative are our song attribute covariates of its popularity? 
+
+```{r dataprep3, echo=FALSE}
+
+# # classifying tracks in top 40 charts 
+# dtLabels = dtTSSummaries[TopPosition<=40][,.(N_Regions=n_distinct(Region)),by=URL]
+# dtLabels[,Label1:=1]
+# dtLabels[N_Regions>2,Label2:=1]
+# qplot(dtLabels$V1,bins=20)+xlab("Number of regions (songs in top 40 charts)")
+
+# classifying 'sticky' tracks with global presence 
+dtLabels = dtTSSummaries[DaysInCharts>=56][,.(N_Regions=n_distinct(Region)),by=URL]
+dtLabels[,Label1:=1]
+dtLabels[N_Regions>1,Label2:=1]
+qplot(dtLabels$N_Regions,bins=20)+xlab("Number of regions (songs in charts for 12 weeks)")
+
+# # joined dataset with all labels / attributes, split into train / test
+# dtTrackSummaries = merge(dtTrackSummaries,
+#                          dtLabels[,.(URL,Label1,Label2)],
+#                          by="URL",all.x = TRUE)
+# dtTrackSummaries[is.na(dtTrackSummaries)] = 0 # fill NAs with zero label 
+# dtTrackSummaries[,Label1:=as.factor(Label1)]
+# dtTrackSummaries[,Label2:=as.factor(Label2)]
+# dtClassification = merge(dtTrackSummaries,song_feats,by="URL",all.x = TRUE)
+# dtClassification = na.omit(dtClassification) # there seem to be unaccounted tracks in song_feats 
+# dtClassificationTop = dtClassification[,
+#                                 !c('URL','Label2','duration_ms','MeanStreams'),with=F]
+# 
+# dtClassificationTopRegion = dtClassification[Label1=="C1"][,
+#                           !c('URL','Label1','duration_ms','MeanStreams'),with=F]
+# 
+# # split into training and test sets
+# percent_test = 0.25
+# idx = seq(1:nrow(dtClassificationTopRegion))
+# set.seed(5)
+# test_idx = sample(idx,round(nrow(dtClassificationTopRegion)*percent_test))
+# train_idx = idx[!(idx %in% test_idx)]
+# dtTrain = dtClassificationTopRegion[train_idx]
+# dtTest = dtClassificationTopRegion[test_idx]
+
+```
+
+### Initial Exploration
+
+A preliminary exploration of the covariates showed us that there's not a very strong signal between our two classes, however there exists a slight difference in terms of some covariates.
+
+```{r exploration, echo=FALSE}
+
+dtTrain = fread("data/train.csv",stringsAsFactors = T)
+dtTest = fread("data/test.csv",stringsAsFactors = T)
+
+ggpairs(dtTrain,
+        mapping = ggplot2::aes(color=Label2))
+
+```
+
+### Classification Model
+
+Our chosen model for the classification task was a logistic regression model that excluded one of the covariates. Selection of this model was done using a cross-validation method using the `caret` package. Our evaluation metric of interest is the AUC (since the majority class in our data consists of $\sim72\%$). Our model was trained by resampling the training data to keep it balanced, and the final evaluation was done on the unbalanced training set via cross validation. We made a change to the covariates "time_signature", "tempo" and "key" by discretizing them and treating them as categorical variables. This led to an improvement in the AUC from  - to - as plotted below. Since there is an AUC difference between our single fit over the training data (AUC 0.67) and from cross validation (AUC 0.625), we anticipate some overfitting, hence a lower AUC on the test data. 
+
+```{r classification1, echo=FALSE}
+
+## Transforming factors 
+# dtTrain 
+# dtTrain[,key:=as.factor(key)]
+# dtTrain[,time_signature:=as.factor(time_signature)]
+# dtTrain[,tempo:=cut(tempo,c(50,90,100,110,120,140,160,200,250))]
+# dtTest[,key:=as.factor(key)]
+# dtTest[,time_signature:=as.factor(time_signature)]
+# dtTest[,tempo:=cut(tempo,c(50,90,100,110,120,140,160,200,250))]
+
+# resampling training data to balance it 
+nLabels = table(dtTrain$Label2)
+set.seed(2)
+dtTrainBalance = rbindlist(list(dtTrain[Label2=="C1"],
+                                dtTrain[Label2=="C0"][sample(seq(1,nLabels[1]),nLabels[2])]
+                                ))
+
+model = glm(data = dtTrainBalance,Label2~.-time_signature,
+            family = binomial) 
+
+ctrl = trainControl(method="cv",number = 10,savePredictions = T,
+                    summaryFunction = twoClassSummary,classProbs = T)
+model_cv = train(Label2 ~ . - time_signature,
+                 data=dtTrain,method="glm",trControl=ctrl,
+            family = binomial, metric="ROC") 
+# model_cv = train(Label2 ~ 1 + acousticness + energy + tempo + loudness,
+#                  data=dtTrain,method="glm",trControl=ctrl,
+#             family = binomial, metric="ROC") 
+
+# testing on unbalanced training data 
+fitted.results.train <- predict(model, newdata=dtTrain[,!'Label2',with=F], type='response')
+rocTrain = roc(Label2 ~ fitted.results.train, data = dtTrain)
+print(auc(rocTrain))
+plot(rocTrain)
+title(main="ROC Curve - unbalanced training set single fit")
+
+# roc from cross validation 
+rocCV = roc(obs~C1,data=model_cv$pred)
+print(auc(rocCV))
+plot(rocCV)
+title(main="ROC Curve - cross validation on full training set")
+
+```
+
+### Evaluation on test set
+
+The AUC obtained from our chosen model on the test set is lower at AUC: 0.60. Since we saw a fairly large difference between single-fit training AUC and the AUC from cross validation, we anticipated a drop in generalization performance. This might be due to the fact that our training and test set are small $\sim1332$ and $\sim444$ observations, hence our error estimated have a high variance. Also, given our exploratory plot that showed very vaguely separable boundary between classes, the performance, while low, seems better than expected.
+
+```{r classificationtest, echo=FALSE}
+
+# testing on unbalanced test data 
+fitted.results.test <- predict(model_cv, newdata=dtTest[,!'Label2',with=F], type='prob')
+fitted.results.test["Label2"] = dtTest$Label2
+rocTest = roc(Label2~fitted.results.test$C1, data = dtTest)
+print(auc(rocTest))
+plot(rocTest)
+title(main="ROC Curve - unbalanced test set")
+
+```
+
+## Inference
+
+### Significance on coefficients fit on training data
+
+We now interpret the significance coefficients for our chosen model from our cross-validation stage, as well as verify whether they may make intuitive sense. We see that we get relatively high significance levels (<0.001) for: energy, acousticness (<1e-4) and at the (<0.05) level for certain tempo categorical coefficients, and loudness. The significance values for each coefficient is the probability of individually observing that value of coefficient under the null hypothesis that the coefficient is zero - assuming that the estimators are normally distributed. Given that the training set consists of a relatively small number of +ve observations ($\sim365$), this test would have a low power and we cannot be as sure about the hypotheses that aren't rejected. 
+
+For the hypotheses that have been rejected ($\sim5$), ordinarily being a low number, and even after applying the Bonferroni correction on p=0.05, we could have been sure of energy and acousticness. However since we have determined our modelling strategy on the basis of the same data, we have biased our estimate of the variance error term $\sigma$ hence we should not trust these due to post-selection bias. 
+
+```{r significance1, echo=FALSE}
+
+summary(model_cv)
+
+```
+
+### Significance on coefficients fit on testing data
+
+Since the test data has $\sim112$ positive class examples, as we explained earlier, the power of tests run in this case would be even lower hence we cannot be sure that hypotheses that have not been rejected are necessarily true. Conversely, we would thus expect a reduction in total  reported significance values, which is what we get, and we should not trust these values too much. 
+
+```{r significance2, echo=FALSE}
+
+# fitting and checking significance on test data 
+modelTest = glm(data = dtTest,Label2~.-time_signature,
+            family = binomial)
+summary(modelTest)
+
+# # testing on unbalanced test data 
+# fitted.results.train <- predict(model, newdata=dtTrain[,!'Label2',with=F], type='response')
+# rocTrain = roc(Label2 ~ fitted.results.train, data = dtTrain)
+# print(auc(rocTrain))
+# plot(rocTrain)
+# title(main="ROC Curve - unbalanced training set single fit")
+
+
+```
+
+### Confidence Intervals via Bootstrap
+
+```{r bootstrap, echo=FALSE}
+
+dtCoeff = data.table(t(coef(model)))
+# iterate, create different training sets
+for(i in 1:1000){
+  idx = seq(1:nrow(dtTrain))
+  chosenIdx = sample(idx,nrow(dtTrain),replace=T)
+  dtTemp = dtTrain[chosenIdx]
+  modelTemp = glm(data = dtTemp,Label2~.-time_signature,
+            family = binomial)
+  coeffDT = data.table(t(coef(modelTemp)))
+  dtCoeff = rbind(dtCoeff,coeffDT,fill=T)
+}
+
+```
+
+### Inclusion of all covariates 
+
+In our model, we had removed the "time_signature" covariate, as it seemed to be causing some kind of collinearity issues, since we can see that now the std. error on the intercept term has completely blown up. 
+
+```{r significance3, echo=FALSE}
+
+modelAll = glm(data = dtTrainBalance,Label2~.,
+            family = binomial) 
+summary(modelAll)
+
+```
+
+## Analysis Discussion
+
+### Potential Issues
+
+* We suspect that our model might be affected by collinearity problems, given that the intercept term has quite a large confidence interval across most of our models. 
+* Also, as discussed in the significance section, the power of the multiple hypothesis tests run for the coefficients is relatively low, due to limited number of positive examples. Also as discussed, while signifiance levels were high enough on a few coefficients after fitting on training data, even after the Bonferroni correction, inferring significant coefficients from this would fall prey to post-selection inference as we discussed earlier. 
+
+### Interpretation 
+
+Since this is a logistic regression, all units need to be converted out of log-odds units to attempt some interpretation, done below. Examining our most significant reported coefficients (they are between 0-1 hence looking at a 1unit change does not make sense):     
+- acousticness: a 0.1 unit increase correlates with a 7.5% reduction in odds of being in Class 1 (sustaining popularity across multiple regions). 
+- energy: a 0.1 unit increase correlates with a 9.0% reduction in odds of being in Class 1. 
+- tempo: the significance on the tempo coefficients, namely in the range of (160,200) and (120,140) indicates that these particular classes have a significant effect above the baseline effect accounted for. 
+
+While the trend with acousticness could make intuitive sense (these songs tend to not be very upbeat, or quite lyrically focused, that does not cross languages/regions), since there's a growing trend for popular songs to be oriented towards dance/club setting, the coefficient on energy is at conflict with this interpretation. This might be influenced by the method by which that metric is generated: does energy correspond to a song being upbeat? or loud and distorted like an avergage rock song? 
+
+What's more interesting is that the effect of tempo seems to be fairly siginificant, which we observed during our qualitative exploration of the data. This makes intuitive sense since only songs within a narrow beat range have the right groove to dance to. This could also be confounded with a bulk of electronic dance music tracks gaining popularity, that are known to be fairly similar in sound and musical structure. 
+
+```{r discussion1, echo=FALSE}
+
+exp(coef(model_cv$finalModel))
+
+```
+
+
+## Conclusion 
+
+In conclusion, given the historical data of songs, 
+
+\newpage
+## Source Code
+
+```{r sourcecode, echo=TRUE,eval=FALSE}
+
+##### Helper functions used #######
+
+# Filter and return top N regions 
+getTopNRegions <- function(dt,N){
+  # Mean of streams by region
+  dailyStreamsByRegion = dt[,.(MeanStreams=mean(Streams)),by=Region]
+  # filter by region - only top 20 regions
+  topNRegions = dailyStreamsByRegion[order(-MeanStreams)][1:(N+1)]
+  dtFiltered = merge(dt,topNRegions,by = "Region")
+  return(dtFiltered)
+}
+
+# Filter only tracks that have been in the top N 
+# charts by region. N=200 will just return the entire dataset
+# Returns: list( dtFiltered, topNTracksStats )
+getTopNTracks <- function(dt,N){
+  # filter tracks getting <= N ranking at some point
+  # groupby TrackName, Region gives a count of dates 
+  topNTracksByRegion = dt[Position<=N][,
+                               .(DaysInTopN=.N),
+                               by=.(TSID,Region)]
+  # join and filter only tracks in this topN list
+  dtFiltered = merge(dt,topNTracksByRegion,by=c("TSID","Region"))
+  return(list(dtFiltered,topNTracksByRegion))
+}
+
+# filter valid time series 
+# Returns: list( dtFiltered, dtTSDurations )
+filterValidTS <- function(dt,minDaysThresh){
+  # pulling out time series with minimum days present 
+  dtTSDurations = dt[,.(DaysInCharts=.N),by=.(URL,Region)][DaysInCharts>=minDaysThresh]
+  # giving each time series and ID
+  dtTSDurations[,TSID:=.I]
+  # joining and filtering back on original dataset
+  dtFiltered = merge(dt,dtTSDurations[,.(TSID,Region,URL)],by = c("URL","Region"))
+  return(list(dtFiltered,dtTSDurations))
+}
+
+######  Notebook code ########
+
+## Data preparation 
+
+# loading in script files
+source("src_akash.R")
+
+dt = fread("data.csv")  # faster than read.csv 
+setnames(dt,"Track Name","TrackName")
+dt[,Date:=as.Date(Date)]
+data = data.frame(dt)
+data$Date = as.Date(data$Date)
+
+# Filter to just top 20 regions
+dt = getTopNRegions(dt,20)
+
+## Filtering time series by minimum durations
+
+dtTSDurations = dt[,.(DaysInCharts=.N),by=.(URL,Region)]
+
+p1 <- ggplot(dtTSDurations)+geom_histogram(aes(x=DaysInCharts),bins=50)+ylab("Histogram of tracks")
+p2 <- ggplot(dtTSDurations)+stat_ecdf(aes(x=DaysInCharts))+ylab("CDF of Tracks")
+
+grid.arrange(p1,p2,nrow=1)
+
+# Filtering down data to only time series of a minium duration
+# Giving a unique ID to a (Track,Region) pair. (this corresponds to one time series)
+tsFilterStat = filterValidTS(dt,28)
+dtFilteredTS = tsFilterStat[[1]]
+dtTSDurations = tsFilterStat[[2]]
+
+## Track Categories
+
+# filter tracks by chart positions (top 200 tracks, top 100 tracks, etc.)
+topUniqueTracks = data.table()
+for(N in c(200,100,50,20,5)){
+  stat = getTopNTracks(dtFilteredTS,N)
+  topNTracksByRegion = stat[[2]]
+  topUniqueTracks = rbind(topUniqueTracks,
+                          topNTracksByRegion[,
+                                      .(UniqueTracks=.N,Category=paste0("Top",N)),
+                                      by=Region])
+}
+
+### Regression 
+
+## Making a dataset of only top 5 songs 
+nTop = 5
+topStat = getTopNTracks(dtFilteredTS,5)
+dtTop = topStat[[1]]
+
+dtTopGB = dtTop[Region=='gb']
+gbTopTSIDs = unique(dtTopGB$TSID)
+
+set.seed(3)
+trainTSIDs = sample(gbTopTSIDs,31)
+
+dtTS = dtTopGB[TSID==trainTSIDs[1],.(Streams,Date)]
+trainTS1 = xts(dtTS[,Streams],order.by = dtTS[,Date])
+
+# Printing RMSE
+RMSEBaseline = sqrt(dtTopGB[TSID%in%trainTSIDs,(Streams-mean(Streams))^2,by=TSID][,mean(V1)])
+
+print(paste("RMSE for baseline:",round(RMSEBaseline,2) ))
+
+tsModel = auto.arima(trainTS1)
+
+summary(tsModel)
+
+ggplot(dtTS)+
+  geom_line(aes(x=Date,y=Streams))+
+  geom_line(aes(x=Date,y=tsModel$fitted),color='red')
+
+plot(forecast(tsModel))
+
+### Classification 
+
+# Number of unique songs in the top x 
+
+x = 20
+unique_top_20 = dt %>% group_by(Region) %>% filter(Position %in% c(1:x)) %>% 
+  summarise(Total_Unique = n_distinct(Track.Name))
+
+# Doing a trends analysis for the song "Chantaje" 
+time_series = dt %>% group_by(Track.Name, Region) %>% filter(Track.Name == "Chantaje")
+top_regions = (time_series %>% group_by(Region) %>% 
+                 summarise(total = n()) %>% filter(total == max(total)))$Region
+
+time_series %>% filter(Region %in% top_regions) %>% 
+  ggplot() + geom_point(mapping = aes(x = Date, y = Position, color = Region))
+
+# Make new dataset with song related features
+song_feats = read_csv("song_feats.csv")
+merged = merge(dt, song_feats, by="URL")
+merged$label = cut(merged$Position, breaks=c(0,20,200), labels=c(1,0))
+
+# Run logistic regression
+classification = glm(label ~ energy + liveness + tempo + speechiness + acousticness + instrumentalness + danceability + loudness, data = merged, family = binomial)
+
+
+```
+
