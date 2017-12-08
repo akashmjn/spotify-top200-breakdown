@@ -27,10 +27,11 @@ confusion_matrix = function(fitted.results, new_dt){
   print(paste('True Positive Rate: ',num_true_positive/length(fitted.results)))
 }
 
-x = 20
+x = 10
+num_regions = 2
 unique_songs = akash_data %>% group_by(URL) %>% filter(Position %in% c(1:x)) %>% summarise(num_unique = n_distinct(Region)) %>% arrange(desc(num_unique))
 
-top_track_URLS = (unique_songs %>% filter(num_unique > 4))$URL
+top_track_URLS = (unique_songs %>% filter(num_unique >= num_regions))$URL
 
 #bottom_track_URLS = (unique_songs %>% filter(num_unique == 1))$URL
 bottom_track_URLS = (song_feats %>% filter(!(URL %in% unique_songs$URL)))$URL
@@ -66,7 +67,7 @@ fitted.results.test <- predict(classification, newdata=to_predict_test, type='re
 fitted.results.test <- ifelse(fitted.results.test > 0.5,1,0)
 
 misClasificError.test <- mean(fitted.results.test != test_data$label)
-print(paste('Testing Accuracy',1-misClasificError.test))
+#print(paste('Testing Accuracy',1-misClasificError.test))
 
 
 # Print confusion matrix
@@ -75,6 +76,48 @@ confusion_matrix(fitted.results.train, train_data)
 
 print("Testing")
 confusion_matrix(fitted.results.test, test_data)
+
+# Model on test dat
+classification = glm(label ~ energy + liveness + tempo + speechiness + acousticness + instrumentalness + danceability + loudness + valence, data = test_data, family = binomial)
+
+# Bootstrap coefficient estimates
+intercept = c()
+energy = c()
+liveness = c() 
+tempo = c()
+speechiness = c()
+acousticness = c()
+instrumentalness = c()
+danceability = c()
+loudness = c()
+valence = c()
+
+for (i in 1:1000){
+top_train_URLS_boot = sample(top_train_URLS, length(top_train_URLS), replace = TRUE)
+bottom_train_URLS_boot = sample(bottom_train_URLS, length(bottom_train_URLS), replace = TRUE)
+
+# Create train and test set
+train_data_boot = song_feats %>% filter((URL %in% top_train_URLS_boot) | (URL %in% bottom_train_URLS_boot))
+train_data_boot = transform(train_data_boot, label = if_else(URL %in% top_train_URLS_boot, 1, 0))
+
+classification = glm(label ~ energy + liveness + tempo + speechiness + acousticness + instrumentalness + danceability + loudness + valence, data = train_data_boot, family = binomial)
+intercept = c(intercept, classification$coefficients[1])
+energy = c(energy, classification$coefficients[2])
+liveness = c(liveness, classification$coefficients[3]) 
+tempo = c(tempo, classification$coefficients[4])
+speechiness = c(speechiness, classification$coefficients[5])
+acousticness = c(acousticness, classification$coefficients[6])
+instrumentalness = c(instrumentalness, classification$coefficients[7])
+danceability = c(danceability, classification$coefficients[8])
+loudness = c(loudness, classification$coefficients[9])
+valence = c(valence, classification$coefficients[10])
+}
+
+
+
+
+
+
 
 temp_dt_1 = dt %>% group_by(URL) %>% summarise(mean = mean(Streams))
 

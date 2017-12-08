@@ -6,22 +6,22 @@ unique_top_20 = dt %>% group_by(Region) %>% filter(Position %in% c(1:x)) %>%
   summarise(Total_Unique = n_distinct(Track.Name)) %>% arrange(desc(Total_Unique))
 
 # Get names of tracks in the region decided from above that are in the top at least once
-top_track_names = unique((dt %>% filter((Region == "is") & (Position %in% c(1:x))))$URL)
+top_track_names = unique((dt %>% filter((Region == "fr") & (Position %in% c(1:x))))$URL)
 
 # Get bottom tracks
-bottom_track_names = unique((dt %>% filter((Region == "is") & !(URL %in% top_track_names)))$URL)
+bottom_track_names = unique((dt %>% filter((Region == "fr") & !(URL %in% top_track_names)))$URL)
 bottom_track_names = sample(bottom_track_names, length(top_track_names))
 
 # Make new dataset with labels added
 new_dt = song_feats %>% filter((URL %in% top_track_names) | (URL %in% bottom_track_names))
 new_dt = transform(new_dt, label = if_else(URL %in% top_track_names, 1, 0))
-new_col = rep("is", nrow(new_dt))
+new_col = rep("fr", nrow(new_dt))
 new_dt$Region = new_col
 
 akash_data = read.csv("data_t20regions.csv")
 
 # Make dataframe with multiple regions included
-regions_to_include = c("fi", "nl", "it", "de", "fr")
+regions_to_include = c("fi", "nl", "it", "de")
 regions_to_include = c("ar", "au", "br", "ca", "cl", "de", "dk", "es", "fi", "fr", "gb", "global", "id", "it", "mx", "nl", "no", "pe", "ph", "se", "us")
 for (i in (1 : length(regions_to_include))){
   top_track_names = unique((dt %>% filter((Region == regions_to_include[i]) & (Position %in% c(1:x))))$URL)

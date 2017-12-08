@@ -1,0 +1,206 @@
+---
+title: "mini_3"
+author: "Raunaq Rewari"
+date: "December 7, 2017"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library("tidyverse")
+library("reshape")
+```
+
+## R Markdown
+**Classification**
+
+We want to predict whether a song will ever make it to the top 20. Since a song’s popularity should intuitively depend on the inherent features of a song, we used Spotify’s API to get the following features per song:
+Danceability
+Energy
+Key
+Loudness
+Mode
+Speechiness
+Acousticness
+Instrumentalness
+Liveness
+Valence
+Tempo
+
+For a first attempt, we focused on one region, say US, and all songs that were ever in the top 20 were given a label 1 and the others a label 0. We used logistic regression to model the problem with the covariates mentioned above. We found no correlation between popularity and any of the covariates.
+
+We next looked at the top 6 popular Regions, again trying to predict if a song will make it to the top 20. We added the Region covariate this time into our analysis and again found no statistically significant covariate. Following is a plot that shows (the lack of) correlation between each covariate and the mean number of streams for each song. 
+```{r}
+dt = read.csv("data.csv")
+song_feats = read_csv("song_feats.csv")
+
+# Number of unique songs in the top x. Find the region with the maximum number
+x = 20
+unique_top_20 = dt %>% group_by(Region) %>% filter(Position %in% c(1:x)) %>% 
+  summarise(Total_Unique = n_distinct(Track.Name)) %>% arrange(desc(Total_Unique))
+
+# Get names of tracks in the region decided from above that are in the top at least once
+top_track_names = unique((dt %>% filter((Region == "fr") & (Position %in% c(1:x))))$URL)
+
+# Get bottom tracks
+bottom_track_names = unique((dt %>% filter((Region == "fr") & !(URL %in% top_track_names)))$URL)
+bottom_track_names = sample(bottom_track_names, length(top_track_names))
+
+# Make new dataset with labels added
+new_dt = song_feats %>% filter((URL %in% top_track_names) | (URL %in% bottom_track_names))
+new_dt = transform(new_dt, label = if_else(URL %in% top_track_names, 1, 0))
+new_col = rep("fr", nrow(new_dt))
+new_dt$Region = new_col
+
+regions_to_include = c("fi", "nl", "it", "de")
+for (i in (1 : length(regions_to_include))){
+  top_track_names = unique((dt %>% filter((Region == regions_to_include[i]) & (Position %in% c(1:x))))$URL)
+  bottom_track_names = unique((dt %>% filter((Region == regions_to_include[i]) & !(URL %in% top_track_names)))$URL)
+  bottom_track_names = sample(bottom_track_names, length(top_track_names))
+  curr_dt = song_feats %>% filter((URL %in% top_track_names) | (URL %in% bottom_track_names))
+  curr_dt = transform(curr_dt, label = if_else(URL %in% top_track_names, 1, 0))
+  new_col = rep(regions_to_include[i], nrow(curr_dt))
+  curr_dt$Region = new_col
+  new_dt = rbind(new_dt, curr_dt)
+}
+mean_streams = dt %>% group_by(URL) %>% summarise(mean = mean(Streams))
+songSummaries5Regions = merge(new_dt,mean_streams,by="URL")
+
+pivoted = melt(songSummaries5Regions,id.vars = c("mean","URL","Region"),
+               value.name = "value")
+
+ggplot(pivoted)+geom_point(aes(x=value,y=mean,color=Region))+
+  facet_wrap(~variable,scales = "free_x")
+
+```
+
+
+```{r}
+akash_data = read.csv("data_t20regions.csv")
+
+confusion_matrix = function(fitted.results, new_dt){
+  num_false_positive = 0
+  num_false_negative = 0
+  num_true_negative = 0
+  num_true_positive = 0
+  for (i in 1:length(fitted.results)){
+    if ((fitted.results[i] == 1) & (new_dt$label[i]) == 0){
+      num_false_positive = num_false_positive + 1
+    }
+    if ((fitted.results[i] == 0) & (new_dt$label[i]) == 1){
+      num_false_negative = num_false_negative + 1
+    }
+    if ((fitted.results[i] == 0) & (new_dt$label[i]) == 0){
+      num_true_negative = num_true_negative + 1
+    }
+    if ((fitted.results[i] == 1) & (new_dt$label[i]) == 1){
+      num_true_positive = num_true_positive + 1
+    }
+  }
+  print(paste('False Positive Rate: ',num_false_positive/length(fitted.results)))
+  print(paste('False Negative Rate: ',num_false_negative/length(fitted.results)))
+  print(paste('True Negative Rate: ',num_true_negative/length(fitted.results)))
+  print(paste('True Positive Rate: ',num_true_positive/length(fitted.results)))
+}
+
+x = 10
+num_regions = 2
+unique_songs = akash_data %>% group_by(URL) %>% filter(Position %in% c(1:x)) %>% summarise(num_unique = n_distinct(Region)) %>% arrange(desc(num_unique))
+
+top_track_URLS = (unique_songs %>% filter(num_unique >= num_regions))$URL
+
+#bottom_track_URLS = (unique_songs %>% filter(num_unique == 1))$URL
+bottom_track_URLS = (song_feats %>% filter(!(URL %in% unique_songs$URL)))$URL
+#bottom_track_URLS = sample(bottom_track_URLS, length(top_track_URLS))
+
+percent_test = 0.2
+top_test_URLS = sample(top_track_URLS, percent_test*length(top_track_URLS))
+top_train_URLS = top_track_URLS[!top_track_URLS %in% top_test_URLS]
+
+bottom_test_URLS = sample(bottom_track_URLS, length(top_test_URLS))
+bottom_train_URLS = bottom_track_URLS[!bottom_track_URLS %in% bottom_test_URLS]
+bottom_train_URLS = sample(bottom_train_URLS, length(top_train_URLS))
+
+# Create train and test set
+train_data = song_feats %>% filter((URL %in% top_train_URLS) | (URL %in% bottom_train_URLS))
+train_data = transform(train_data, label = if_else(URL %in% top_train_URLS, 1, 0))
+
+test_data = song_feats %>% filter((URL %in% top_test_URLS) | (URL %in% bottom_test_URLS))
+test_data = transform(test_data, label = if_else(URL %in% top_test_URLS, 1, 0))
+
+to_predict_train = train_data[,c("energy","liveness","tempo","speechiness","acousticness","instrumentalness","danceability","loudness", "valence")]
+to_predict_test = test_data[,c("energy","liveness","tempo","speechiness","acousticness","instrumentalness","danceability","loudness", "valence")]
+
+```
+We came to the conclusion that we needed a better decision boundary between what we label as popular and what we label as not. In other words, the features we had to work with did not have enough signal. Finally we decided to label songs as popular if they were in the top 20 in at least 5 of the top 20 highest streaming regions. Songs that did not make it to the highest streaming regions composed the negative set for our classification problem.
+
+
+**Predicting on a test set**
+```{r}
+classification = glm(label ~ energy + liveness + tempo + speechiness + acousticness + instrumentalness + danceability + loudness + valence, data = train_data, family = binomial)
+
+fitted.results.train <- predict(classification, newdata=to_predict_train, type='response')
+fitted.results.train <- ifelse(fitted.results.train > 0.5,1,0)
+
+misClasificError.train <- mean(fitted.results.train != train_data$label)
+print(paste('Training Accuracy',1-misClasificError.train))
+fitted.results.test <- predict(classification, newdata=to_predict_test, type='response')
+fitted.results.test <- ifelse(fitted.results.test > 0.5,1,0)
+
+misClasificError.test <- mean(fitted.results.test != test_data$label)
+print(paste('Testing Accuracy',1-misClasificError.test))
+```
+
+**Inference. Part a)**: Model summary
+```{r}
+summary(classification)
+```
+
+**Inference. Part b)**: Fitting model on test data
+```{r}
+classification_test = glm(label ~ energy + liveness + tempo + speechiness + acousticness + instrumentalness + danceability + loudness + valence, data = test_data, family = binomial)
+summary(classification_test)
+
+```
+
+**Inference. Part c)**: Bootstrapping coefficients of regression for 1000 samples
+```{r}
+num_samples = 1000
+
+intercept = c()
+energy = c()
+liveness = c() 
+tempo = c()
+speechiness = c()
+acousticness = c()
+instrumentalness = c()
+danceability = c()
+loudness = c()
+valence = c()
+
+for (i in 1:num_samples){
+top_train_URLS_boot = sample(top_train_URLS, length(top_train_URLS), replace = TRUE)
+bottom_train_URLS_boot = sample(bottom_train_URLS, length(bottom_train_URLS), replace = TRUE)
+
+# Create train and test set
+train_data_boot = song_feats %>% filter((URL %in% top_train_URLS_boot) | (URL %in% bottom_train_URLS_boot))
+train_data_boot = transform(train_data_boot, label = if_else(URL %in% top_train_URLS_boot, 1, 0))
+
+classification = glm(label ~ energy + liveness + tempo + speechiness + acousticness + instrumentalness + danceability + loudness + valence, data = train_data_boot, family = binomial)
+intercept = c(intercept, classification$coefficients[1])
+energy = c(energy, classification$coefficients[2])
+liveness = c(liveness, classification$coefficients[3]) 
+tempo = c(tempo, classification$coefficients[4])
+speechiness = c(speechiness, classification$coefficients[5])
+acousticness = c(acousticness, classification$coefficients[6])
+instrumentalness = c(instrumentalness, classification$coefficients[7])
+danceability = c(danceability, classification$coefficients[8])
+loudness = c(loudness, classification$coefficients[9])
+valence = c(valence, classification$coefficients[10])
+}
+
+# Specify whichever covariate you need to find the confidence intervals for
+quantile(loudness, 0.025)
+quantile(loudness, 0.975)
+```
+
